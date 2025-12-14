@@ -75,6 +75,7 @@ function getMonospaceFontFamily() {
 export function PlayingCardRN({
   faceDown = true,
   canFlip = false,
+  pressEnabled = false,
   size = 'medium',
   orientation = 'horizontal',
   rotationDeg = 0,
@@ -108,10 +109,11 @@ export function PlayingCardRN({
 
   return (
     <Pressable
+      disabled={!pressEnabled && !canFlip}
       onPress={() => {
-        if (!canFlip) return;
+        if (!pressEnabled && !canFlip) return;
         onPress?.();
-        setIsFlipped((prev) => !prev);
+        if (canFlip) setIsFlipped((prev) => !prev);
       }}
       style={({ pressed }) => {
         const transforms = [];
@@ -342,6 +344,99 @@ export default function CardTableScreenRN() {
     setPhase('peek');
   }, [phase]);
 
+  // Stage 4 (new): start-of-game turns (draw → swap/discard).
+  const [discardPile, setDiscardPile] = useState([]); // top is last element
+  const [turnPlayer, setTurnPlayer] = useState('p1');
+  const [turnStep, setTurnStep] = useState('draw'); // 'draw' | 'resolve'
+  const [drawnCard, setDrawnCard] = useState(null);
+  const [openingTurnComplete, setOpeningTurnComplete] = useState(false);
+
+  useEffect(() => {
+    if (phase !== 'peekDone') return;
+    setTurnPlayer('p1');
+    setTurnStep('draw');
+    setDrawnCard(null);
+    setOpeningTurnComplete(false);
+    setPhase('turn');
+  }, [phase]);
+
+  const turnLabel = useMemo(() => {
+    if (phase === 'peek') return activePeekLabel;
+    if (phase === 'turn') {
+      const n = PLAYER_NUM_BY_KEY[turnPlayer] ?? 1;
+      return `P${n} ${turnStep === 'draw' ? 'DRAW' : 'PLAY'}`;
+    }
+    return '⏱';
+  }, [activePeekLabel, phase, PLAYER_NUM_BY_KEY, turnPlayer, turnStep]);
+
+  const endTurn = () => {
+    const order = PEEK_TURN_ORDER;
+    const idx = order.indexOf(turnPlayer);
+    const next = idx >= 0 ? order[(idx + 1) % order.length] : 'p1';
+
+    if (!openingTurnComplete && turnPlayer === 'p1') setOpeningTurnComplete(true);
+
+    setTurnPlayer(next);
+    setTurnStep('draw');
+    setDrawnCard(null);
+  };
+
+  const mustDrawFromDeck = phase === 'turn' && turnStep === 'draw' && !openingTurnComplete && turnPlayer === 'p1';
+  const canDrawDeck = phase === 'turn' && turnStep === 'draw' && !drawnCard && deck.length > 0;
+  const canDrawPile =
+    phase === 'turn' &&
+    turnStep === 'draw' &&
+    !drawnCard &&
+    discardPile.length > 0 &&
+    !mustDrawFromDeck;
+
+  const drawFromDeck = () => {
+    if (!canDrawDeck) return;
+    const card = deck[0];
+    if (!card) return;
+    setDeck((prev) => prev.slice(1));
+    setDrawnCard(card);
+    setTurnStep('resolve');
+  };
+
+  const drawFromPile = () => {
+    if (!canDrawPile) return;
+    setDiscardPile((prev) => {
+      const card = prev[prev.length - 1];
+      if (!card) return prev;
+      setDrawnCard(card);
+      setTurnStep('resolve');
+      return prev.slice(0, -1);
+    });
+  };
+
+  const discardDrawnToPile = () => {
+    if (phase !== 'turn' || turnStep !== 'resolve') return;
+    if (!drawnCard) return;
+    setDiscardPile((prev) => [...prev, drawnCard]);
+    setDrawnCard(null);
+    endTurn();
+  };
+
+  const swapWithHand = (playerKey, index) => {
+    if (phase !== 'turn' || turnStep !== 'resolve') return;
+    if (!drawnCard) return;
+    if (turnPlayer !== playerKey) return;
+    if (index < 0 || index >= HAND_SIZE) return;
+
+    setHands((prev) => {
+      const hand = prev[playerKey] ?? [];
+      const oldCard = hand[index];
+      if (!oldCard) return prev;
+      const nextHand = hand.map((c, idx) => (idx === index ? drawnCard : c));
+      setDiscardPile((pilePrev) => [...pilePrev, oldCard]);
+      return { ...prev, [playerKey]: nextHand };
+    });
+
+    setDrawnCard(null);
+    endTurn();
+  };
+
   const timerText = useMemo(() => {
     const clamped = Math.max(0, peekSecondsLeft);
     const mins = Math.floor(clamped / 60);
@@ -417,7 +512,7 @@ export default function CardTableScreenRN() {
       <View ref={rootRef} collapsable={false} style={styles.root}>
         {/* Timer - Top Right (absolute overlay) */}
         <View style={[styles.labelBox, styles.timer]}>
-          <Text style={styles.labelText}>{phase === 'peek' ? activePeekLabel : '⏱'}</Text>
+          <Text style={styles.labelText}>{turnLabel}</Text>
           <Text style={[styles.labelText, styles.timerText]}>{phase === 'peek' ? timerText : ''}</Text>
         </View>
 
@@ -455,6 +550,8 @@ export default function CardTableScreenRN() {
                 phase === 'peek' &&
                 peekTurnPlayer === 'p2' &&
                 (peekedByPlayer.p2[i] || peekedCountFor('p2') < 2);
+              const canSwapHere = phase === 'turn' && turnStep === 'resolve' && turnPlayer === 'p2' && !!drawnCard;
+              const pressEnabled = canPeekHere || canSwapHere;
               return (
                 <View
                   key={`p2-slot-${i}`}
@@ -467,6 +564,7 @@ export default function CardTableScreenRN() {
                     i < HAND_SIZE - 1 ? styles.mr4 : undefined,
                   ]}
                 >
+                  {canSwapHere ? <View pointerEvents="none" style={styles.actionHaloFill} /> : null}
                   {card ? (
                     <PlayingCardRN
                       size={cardSpecs.p2.size}
@@ -476,15 +574,38 @@ export default function CardTableScreenRN() {
                       value={card.rank}
                       suit={card.suit}
                       faceDown={true}
+                      pressEnabled={pressEnabled}
                       canFlip={canPeekHere}
                       onPress={() => {
-                        if (!canPeekHere) return;
-                        setPeekedByPlayer((prev) => {
-                          if (prev.p2[i]) return prev;
-                          return { ...prev, p2: prev.p2.map((v, idx) => (idx === i ? true : v)) };
-                        });
+                        if (canPeekHere) {
+                          setPeekedByPlayer((prev) => {
+                            if (prev.p2[i]) return prev;
+                            return { ...prev, p2: prev.p2.map((v, idx) => (idx === i ? true : v)) };
+                          });
+                          return;
+                        }
+
+                        if (canSwapHere) swapWithHand('p2', i);
                       }}
                     />
+                  ) : null}
+
+                  {card && canSwapHere ? (
+                    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+                      <PlayingCardRN
+                        size={cardSpecs.p2.size}
+                        scale={cardSpecs.p2.scale}
+                        orientation={cardSpecs.p2.orientation}
+                        rotationDeg={cardSpecs.p2.rotationDeg}
+                        value={card.rank}
+                        suit={card.suit}
+                        faceDown={true}
+                        pressEnabled={true}
+                        canFlip={false}
+                        onPress={() => swapWithHand('p2', i)}
+                        style={{ opacity: 0 }}
+                      />
+                    </View>
                   ) : null}
                 </View>
               );
@@ -504,6 +625,8 @@ export default function CardTableScreenRN() {
                 phase === 'peek' &&
                 peekTurnPlayer === 'p3' &&
                 (peekedByPlayer.p3[i] || peekedCountFor('p3') < 2);
+              const canSwapHere = phase === 'turn' && turnStep === 'resolve' && turnPlayer === 'p3' && !!drawnCard;
+              const pressEnabled = canPeekHere || canSwapHere;
               return (
                 <View
                   key={`p3-slot-${i}`}
@@ -516,6 +639,7 @@ export default function CardTableScreenRN() {
                     i < HAND_SIZE - 1 ? styles.mb2 : undefined,
                   ]}
                 >
+                  {canSwapHere ? <View pointerEvents="none" style={styles.actionHaloFill} /> : null}
                   {card ? (
                     <PlayingCardRN
                       size={cardSpecs.p3.size}
@@ -525,15 +649,38 @@ export default function CardTableScreenRN() {
                       value={card.rank}
                       suit={card.suit}
                       faceDown={true}
+                      pressEnabled={pressEnabled}
                       canFlip={canPeekHere}
                       onPress={() => {
-                        if (!canPeekHere) return;
-                        setPeekedByPlayer((prev) => {
-                          if (prev.p3[i]) return prev;
-                          return { ...prev, p3: prev.p3.map((v, idx) => (idx === i ? true : v)) };
-                        });
+                        if (canPeekHere) {
+                          setPeekedByPlayer((prev) => {
+                            if (prev.p3[i]) return prev;
+                            return { ...prev, p3: prev.p3.map((v, idx) => (idx === i ? true : v)) };
+                          });
+                          return;
+                        }
+
+                        if (canSwapHere) swapWithHand('p3', i);
                       }}
                     />
+                  ) : null}
+
+                  {card && canSwapHere ? (
+                    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+                      <PlayingCardRN
+                        size={cardSpecs.p3.size}
+                        scale={cardSpecs.p3.scale}
+                        orientation={cardSpecs.p3.orientation}
+                        rotationDeg={cardSpecs.p3.rotationDeg}
+                        value={card.rank}
+                        suit={card.suit}
+                        faceDown={true}
+                        pressEnabled={true}
+                        canFlip={false}
+                        onPress={() => swapWithHand('p3', i)}
+                        style={{ opacity: 0 }}
+                      />
+                    </View>
                   ) : null}
                 </View>
               );
@@ -553,6 +700,8 @@ export default function CardTableScreenRN() {
                 phase === 'peek' &&
                 peekTurnPlayer === 'p4' &&
                 (peekedByPlayer.p4[i] || peekedCountFor('p4') < 2);
+              const canSwapHere = phase === 'turn' && turnStep === 'resolve' && turnPlayer === 'p4' && !!drawnCard;
+              const pressEnabled = canPeekHere || canSwapHere;
               return (
                 <View
                   key={`p4-slot-${i}`}
@@ -565,6 +714,7 @@ export default function CardTableScreenRN() {
                     i < HAND_SIZE - 1 ? styles.mb2 : undefined,
                   ]}
                 >
+                  {canSwapHere ? <View pointerEvents="none" style={styles.actionHaloFill} /> : null}
                   {card ? (
                     <PlayingCardRN
                       size={cardSpecs.p4.size}
@@ -574,15 +724,38 @@ export default function CardTableScreenRN() {
                       value={card.rank}
                       suit={card.suit}
                       faceDown={true}
+                      pressEnabled={pressEnabled}
                       canFlip={canPeekHere}
                       onPress={() => {
-                        if (!canPeekHere) return;
-                        setPeekedByPlayer((prev) => {
-                          if (prev.p4[i]) return prev;
-                          return { ...prev, p4: prev.p4.map((v, idx) => (idx === i ? true : v)) };
-                        });
+                        if (canPeekHere) {
+                          setPeekedByPlayer((prev) => {
+                            if (prev.p4[i]) return prev;
+                            return { ...prev, p4: prev.p4.map((v, idx) => (idx === i ? true : v)) };
+                          });
+                          return;
+                        }
+
+                        if (canSwapHere) swapWithHand('p4', i);
                       }}
                     />
+                  ) : null}
+
+                  {card && canSwapHere ? (
+                    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+                      <PlayingCardRN
+                        size={cardSpecs.p4.size}
+                        scale={cardSpecs.p4.scale}
+                        orientation={cardSpecs.p4.orientation}
+                        rotationDeg={cardSpecs.p4.rotationDeg}
+                        value={card.rank}
+                        suit={card.suit}
+                        faceDown={true}
+                        pressEnabled={true}
+                        canFlip={false}
+                        onPress={() => swapWithHand('p4', i)}
+                        style={{ opacity: 0 }}
+                      />
+                    </View>
                   ) : null}
                 </View>
               );
@@ -595,7 +768,13 @@ export default function CardTableScreenRN() {
           <View style={styles.centerStack}>
             {/* Deck */}
             <View style={styles.centerBlock}>
-              <View style={{ position: 'relative', width: 64, height: 96 }}>
+              <Pressable
+                onPress={drawFromDeck}
+                style={[
+                  { position: 'relative', width: 64, height: 96, padding: 4, borderRadius: 2 },
+                  canDrawDeck ? styles.actionHalo : null,
+                ]}
+              >
                 {/* Deck origin (measured) is the top card position */}
                 <View ref={deckOriginRef} collapsable={false}>
                   <PlayingCardRN size="small" orientation="vertical" />
@@ -610,16 +789,57 @@ export default function CardTableScreenRN() {
                   orientation="vertical"
                   style={{ position: 'absolute', top: 8, left: 8 }}
                 />
-              </View>
+              </Pressable>
               <Text style={styles.caption}>DECK</Text>
             </View>
 
-            {/* Play Area */}
+            {/* Drawn card (shown after drawing) */}
             <View style={[styles.centerBlock, styles.mt24]}>
-              <View style={styles.playSlot}>
-                <Text style={styles.playSlotText}>PLAY</Text>
+              <View style={{ alignItems: 'center' }}>
+                {drawnCard ? (
+                  <PlayingCardRN
+                    size="small"
+                    orientation="vertical"
+                    faceDown={false}
+                    value={drawnCard.rank}
+                    suit={drawnCard.suit}
+                  />
+                ) : (
+                  <View style={styles.playSlot}>
+                    <Text style={styles.playSlotText}>DRAWN</Text>
+                  </View>
+                )}
+                <Text style={styles.caption}>DRAWN</Text>
               </View>
-              <Text style={styles.caption}>PLAY</Text>
+            </View>
+
+            {/* Discard pile (middle) */}
+            <View style={[styles.centerBlock, styles.mt24]}>
+              <Pressable
+                onPress={() => {
+                  if (phase === 'turn' && turnStep === 'draw') drawFromPile();
+                  else discardDrawnToPile();
+                }}
+                style={[
+                  styles.playSlot,
+                  (canDrawPile || (phase === 'turn' && turnStep === 'resolve' && !!drawnCard))
+                    ? styles.actionHalo
+                    : null,
+                ]}
+              >
+                {discardPile.length > 0 ? (
+                  <PlayingCardRN
+                    size="small"
+                    orientation="vertical"
+                    faceDown={false}
+                    value={discardPile[discardPile.length - 1].rank}
+                    suit={discardPile[discardPile.length - 1].suit}
+                  />
+                ) : (
+                  <Text style={styles.playSlotText}>PILE</Text>
+                )}
+              </Pressable>
+              <Text style={styles.caption}>PILE</Text>
             </View>
           </View>
         </View>
@@ -633,6 +853,8 @@ export default function CardTableScreenRN() {
                 phase === 'peek' &&
                 peekTurnPlayer === 'p1' &&
                 (peekedByPlayer.p1[i] || peekedCountFor('p1') < 2);
+              const canSwapHere = phase === 'turn' && turnStep === 'resolve' && turnPlayer === 'p1' && !!drawnCard;
+              const pressEnabled = canPeekHere || canSwapHere;
               return (
                 <View
                   key={`p1-slot-${i}`}
@@ -645,6 +867,7 @@ export default function CardTableScreenRN() {
                     i < HAND_SIZE - 1 ? styles.mr8 : undefined,
                   ]}
                 >
+                  {canSwapHere ? <View pointerEvents="none" style={styles.actionHaloFill} /> : null}
                   {card ? (
                     <PlayingCardRN
                       size={cardSpecs.p1.size}
@@ -654,13 +877,18 @@ export default function CardTableScreenRN() {
                       value={card.rank}
                       suit={card.suit}
                       faceDown={true}
+                      pressEnabled={pressEnabled}
                       canFlip={canPeekHere}
                       onPress={() => {
-                        if (!canPeekHere) return;
-                        setPeekedByPlayer((prev) => {
-                          if (prev.p1[i]) return prev;
-                          return { ...prev, p1: prev.p1.map((v, idx) => (idx === i ? true : v)) };
-                        });
+                        if (canPeekHere) {
+                          setPeekedByPlayer((prev) => {
+                            if (prev.p1[i]) return prev;
+                            return { ...prev, p1: prev.p1.map((v, idx) => (idx === i ? true : v)) };
+                          });
+                          return;
+                        }
+
+                        if (canSwapHere) swapWithHand('p1', i);
                       }}
                     />
                   ) : null}
@@ -673,6 +901,7 @@ export default function CardTableScreenRN() {
               styles.nameplate,
               styles.nameplateYou,
               phase === 'peek' && peekTurnPlayer === 'p1' ? styles.nameplateActive : null,
+              phase === 'turn' && turnPlayer === 'p1' ? styles.nameplateActive : null,
             ]}
           >
             <Text
@@ -680,6 +909,7 @@ export default function CardTableScreenRN() {
                 styles.labelText,
                 styles.labelTextYou,
                 phase === 'peek' && peekTurnPlayer === 'p1' ? styles.labelTextActive : null,
+                phase === 'turn' && turnPlayer === 'p1' ? styles.labelTextActive : null,
               ]}
             >
               YOU - PLAYER 1
@@ -786,6 +1016,12 @@ const styles = StyleSheet.create({
   },
   labelTextActive: {
     color: '#ffffff',
+  },
+
+  actionHaloFill: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(250, 204, 21, 0.45)',
+    borderRadius: 6,
   },
 
   topPlayer: {
