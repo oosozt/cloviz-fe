@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { HAND_SIZE } from '../lib/cards';
 import { PLAYER_NUM_BY_KEY, TURN_ORDER } from '../lib/seating';
+import { computeGameResult } from '../lib/scoring';
+import { buildOrderStartingFrom, nextPlayerInOrder } from '../lib/turn';
 
 /**
  * Core gameplay hook (everything after peek).
@@ -68,34 +70,10 @@ export function useTurnStage({ phase, setPhase, deck, setDeck, hands, setHands }
 
   const respondPlayer = respondOrder?.[respondIndex] ?? null;
 
-  // Scoring values used on game over.
-  // NOTE: ranks are strings (e.g. '10', 'Q'), not numbers.
-  const computeRankValue = (rank) => {
-    if (rank === 'A') return 1;
-    if (rank === 'J') return 11;
-    if (rank === 'Q') return 12;
-    if (rank === 'K') return 0;
-    const n = Number(rank);
-    if (Number.isFinite(n)) return n;
-    return 0;
-  };
-
-  // Compute total points per player. Lowest total wins.
-  const computeScores = (handsSnapshot) => {
-    const scores = {};
-    for (const key of TURN_ORDER) {
-      const hand = handsSnapshot?.[key] ?? [];
-      scores[key] = hand.reduce((sum, c) => sum + computeRankValue(c?.rank), 0);
-    }
-    const min = Math.min(...Object.values(scores));
-    const winners = Object.keys(scores).filter((k) => scores[k] === min);
-    return { scores, winners, min };
-  };
-
   // Force game over now.
   // Caller can pass a hand snapshot if it knows hands are changing concurrently.
   const endGameNow = (handsSnapshot) => {
-    const result = computeScores(handsSnapshot);
+    const result = computeGameResult(handsSnapshot, TURN_ORDER);
     setGameOverResult(result);
     setPhase('gameOver');
   };
@@ -118,8 +96,7 @@ export function useTurnStage({ phase, setPhase, deck, setDeck, hands, setHands }
 
   const endTurn = () => {
     // Move to next player in TURN_ORDER.
-    const idx = TURN_ORDER.indexOf(turnPlayer);
-    const next = idx >= 0 ? TURN_ORDER[(idx + 1) % TURN_ORDER.length] : 'p1';
+    const next = nextPlayerInOrder(turnPlayer, TURN_ORDER) ?? 'p1';
 
     if (!openingTurnComplete && turnPlayer === 'p1') setOpeningTurnComplete(true);
 
@@ -132,14 +109,8 @@ export function useTurnStage({ phase, setPhase, deck, setDeck, hands, setHands }
     // After ANY card is played to the pile (discard or swap), we run:
     // 1) optional power stage (Q/J)
     // 2) respond window (all players clockwise starting from the player who just played)
-    const startIdx = TURN_ORDER.indexOf(playedBy);
-    const order =
-      startIdx >= 0
-        ? [...TURN_ORDER.slice(startIdx), ...TURN_ORDER.slice(0, startIdx)]
-        : [...TURN_ORDER];
-
-    const nextIdx = TURN_ORDER.indexOf(playedBy);
-    const next = nextIdx >= 0 ? TURN_ORDER[(nextIdx + 1) % TURN_ORDER.length] : 'p1';
+    const order = buildOrderStartingFrom(playedBy, TURN_ORDER);
+    const next = nextPlayerInOrder(playedBy, TURN_ORDER) ?? 'p1';
 
     if (!openingTurnComplete && playedBy === 'p1') setOpeningTurnComplete(true);
 
@@ -214,11 +185,7 @@ export function useTurnStage({ phase, setPhase, deck, setDeck, hands, setHands }
     // - If they played Q/J, we interpose the power stage before respond continues.
     if (!respondRank) return;
 
-    const startIdx = TURN_ORDER.indexOf(playedBy);
-    const order =
-      startIdx >= 0
-        ? [...TURN_ORDER.slice(startIdx), ...TURN_ORDER.slice(0, startIdx)]
-        : [...TURN_ORDER];
+    const order = buildOrderStartingFrom(playedBy, TURN_ORDER);
 
     setRespondOrder(order);
     setRespondIndex(0);

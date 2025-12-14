@@ -2,14 +2,16 @@ import React, { useMemo, useRef, useState } from 'react';
 import {
   Animated,
   SafeAreaView,
-  Text,
   View,
 } from 'react-native';
 
 import { PlayingCardRN } from './components/PlayingCardRN';
-import { PlayerHand } from './components/PlayerHand';
 import { CenterArea } from './components/CenterArea';
+import { GameOverOverlay } from './components/GameOverOverlay';
+import { PhaseTimerOverlay } from './components/PhaseTimerOverlay';
+import { PlayerSeat } from './components/PlayerSeat';
 import { HAND_SIZE, getCardDimensions } from './lib/cards';
+import { computeScoresForHands } from './lib/scoring';
 import { styles } from './styles/CardTableScreen.styles';
 
 import { useDealingStage } from './hooks/useDealingStage';
@@ -131,22 +133,7 @@ export default function CardTableScreenRN() {
   const finalScores = useMemo(() => {
     if (phase !== 'gameOver') return null;
 
-    const valueOf = (rank) => {
-      if (rank === 'A') return 1;
-      if (rank === 'J') return 11;
-      if (rank === 'Q') return 12;
-      if (rank === 'K') return 0;
-      const n = Number(rank);
-      return Number.isFinite(n) ? n : 0;
-    };
-
-    const scores = {
-      p1: (hands.p1 ?? []).reduce((s, c) => s + valueOf(c?.rank), 0),
-      p2: (hands.p2 ?? []).reduce((s, c) => s + valueOf(c?.rank), 0),
-      p3: (hands.p3 ?? []).reduce((s, c) => s + valueOf(c?.rank), 0),
-      p4: (hands.p4 ?? []).reduce((s, c) => s + valueOf(c?.rank), 0),
-    };
-
+    const scores = computeScoresForHands(hands, ['p1', 'p2', 'p3', 'p4']);
     const min = Math.min(scores.p1, scores.p2, scores.p3, scores.p4);
     const winners = Object.keys(scores).filter((k) => scores[k] === min);
     return { scores, winners };
@@ -186,21 +173,7 @@ export default function CardTableScreenRN() {
   return (
     <SafeAreaView style={styles.screen}>
       <View ref={rootRef} collapsable={false} style={styles.root}>
-        {phase === 'gameOver' && finalScores ? (
-          <View style={styles.gameOverOverlay} pointerEvents="none">
-            <Text style={styles.gameOverTitle}>FINAL SCORES</Text>
-            <Text style={styles.gameOverLine}>P1: {finalScores.scores?.p1 ?? 0}</Text>
-            <Text style={styles.gameOverLine}>P2: {finalScores.scores?.p3 ?? 0}</Text>
-            <Text style={styles.gameOverLine}>P3: {finalScores.scores?.p2 ?? 0}</Text>
-            <Text style={styles.gameOverLine}>P4: {finalScores.scores?.p4 ?? 0}</Text>
-            <Text style={styles.gameOverLine}>
-              WINNER:{' '}
-              {(finalScores.winners ?? [])
-                .map((k) => (k === 'p1' ? 'P1' : k === 'p3' ? 'P2' : k === 'p2' ? 'P3' : 'P4'))
-                .join(' / ') || '-'}
-            </Text>
-          </View>
-        ) : null}
+        <GameOverOverlay styles={styles} finalScores={finalScores} visible={phase === 'gameOver'} />
 
         {/*
           Timer - Top Right (absolute overlay)
@@ -209,18 +182,19 @@ export default function CardTableScreenRN() {
           - respond: uses respond countdown
           - look/joker: uses power countdown
         */}
-        <View style={[styles.labelBox, styles.timer]}>
-          <Text style={styles.labelText}>{turnLabel}</Text>
-          <Text style={[styles.labelText, styles.timerText]}>
-            {phase === 'peek'
+        <PhaseTimerOverlay
+          styles={styles}
+          label={turnLabel}
+          timerText={
+            phase === 'peek'
               ? timerText
               : phase === 'respond'
                 ? respondTimerText
                 : phase === 'look' || phase === 'joker'
                   ? powerTimerText
-                  : ''}
-          </Text>
-        </View>
+                  : ''
+          }
+        />
 
         {/* Animated dealing card (shown only during stage 2) */}
         {phase === 'dealing' && dealingCard ? (
@@ -244,214 +218,149 @@ export default function CardTableScreenRN() {
           </Animated.View>
         ) : null}
 
-        {/*
-          Player 3 (Top)
-          UI seat mapping:
-          - This is `p2` (see lib/seating.js). The label says "PLAYER 3".
-        */}
-        <View style={[styles.topPlayer, phase === 'init' ? styles.playersHidden : null]}>
-          <View
-            style={[
-              styles.nameplate,
-              phase === 'peek' && peekTurnPlayer === 'p2' ? styles.nameplateActive : null,
-              phase === 'respond' && respondPlayer === 'p2' ? styles.nameplateActive : null,
-              isPowerPhase && powerPlayer === 'p2' ? styles.nameplateActive : null,
-            ]}
-          >
-            <Text
-              style={[
-                styles.labelText,
-                phase === 'peek' && peekTurnPlayer === 'p2' ? styles.labelTextActive : null,
-                phase === 'respond' && respondPlayer === 'p2' ? styles.labelTextActive : null,
-                isPowerPhase && powerPlayer === 'p2' ? styles.labelTextActive : null,
-              ]}
-            >
-              PLAYER 3
-            </Text>
-          </View>
-          <PlayerHand
-            playerKey="p2"
-            hand={hands.p2}
-            handSize={HAND_SIZE}
-            cardSpec={cardSpecs.p2}
-            getSlotBoxStyle={getSlotBoxStyle}
-            slotRefs={slotRefs}
-            styles={styles}
-            layout="row"
-            gapStyle={styles.mr4}
-            // Peek phase: active player can flip up to 2 cards (face-down otherwise).
-            canPeekAtIndex={(i) =>
+        <PlayerSeat
+          styles={styles}
+          containerStyle={styles.topPlayer}
+          hidden={phase === 'init'}
+          title="PLAYER 3"
+          active={
+            (phase === 'peek' && peekTurnPlayer === 'p2') ||
+            (phase === 'respond' && respondPlayer === 'p2') ||
+            (isPowerPhase && powerPlayer === 'p2')
+          }
+          handProps={{
+            playerKey: 'p2',
+            hand: hands.p2,
+            handSize: HAND_SIZE,
+            cardSpec: cardSpecs.p2,
+            getSlotBoxStyle,
+            slotRefs,
+            styles,
+            layout: 'row',
+            gapStyle: styles.mr4,
+
+            canPeekAtIndex: (i) =>
               phase === 'peek' &&
               peekTurnPlayer === 'p2' &&
-              (peekedByPlayer.p2[i] || peekedCountFor('p2') < 2)
-            }
-            onPeekAtIndex={(i) =>
-              markPeeked('p2', i)
-            }
-            // Respond phase: active responder may play *any* card (cards are face-down).
-            canRespondAtIndex={(i) =>
+              (peekedByPlayer.p2[i] || peekedCountFor('p2') < 2),
+            onPeekAtIndex: (i) => markPeeked('p2', i),
+
+            canRespondAtIndex: (i) =>
               phase === 'respond' &&
               respondPlayer === 'p2' &&
               !!respondRank &&
-              !!hands.p2?.[i]
-            }
-            onRespondAtIndex={(i) => respondPlayFromHand('p2', i)}
-            // Power phases (Q/J): allow tapping any existing card.
-            canPowerAtIndex={(i) =>
+              !!hands.p2?.[i],
+            onRespondAtIndex: (i) => respondPlayFromHand('p2', i),
+
+            canPowerAtIndex: (i) =>
               isPowerPhase &&
               !!hands.p2?.[i] &&
-              (phase === 'look' ? !lookRevealed : true)
-            }
-            onPowerAtIndex={(i) => powerPress('p2', i)}
-            // Only the selected looked-at card is revealed during the look window.
-            isFaceUpAtIndex={(i) =>
-              phase === 'look' &&
-              lookRevealed?.playerKey === 'p2' &&
-              lookRevealed?.index === i
-            }
-            // Turn resolve: active player can swap the drawn card with a slot in their hand.
-            canSwap={phase === 'turn' && turnStep === 'resolve' && turnPlayer === 'p2' && !!drawnCard}
-            onSwapAtIndex={(i) => swapWithHand('p2', i)}
-            forceFaceUp={phase === 'gameOver'}
-          />
-        </View>
+              (phase === 'look' ? !lookRevealed : true),
+            onPowerAtIndex: (i) => powerPress('p2', i),
+            isFaceUpAtIndex: (i) =>
+              phase === 'look' && lookRevealed?.playerKey === 'p2' && lookRevealed?.index === i,
 
-        {/*
-          Player 2 (Left)
-          UI seat mapping:
-          - This is `p3` (label says "PLAYER 2").
-          - Cards are rotated to face the table.
-        */}
-        <View style={[styles.leftPlayer, phase === 'init' ? styles.playersHidden : null]}>
-          <View
-            style={[
-              styles.nameplate,
-              phase === 'peek' && peekTurnPlayer === 'p3' ? styles.nameplateActive : null,
-              phase === 'respond' && respondPlayer === 'p3' ? styles.nameplateActive : null,
-              isPowerPhase && powerPlayer === 'p3' ? styles.nameplateActive : null,
-            ]}
-          >
-            <Text
-              style={[
-                styles.labelText,
-                phase === 'peek' && peekTurnPlayer === 'p3' ? styles.labelTextActive : null,
-                phase === 'respond' && respondPlayer === 'p3' ? styles.labelTextActive : null,
-                isPowerPhase && powerPlayer === 'p3' ? styles.labelTextActive : null,
-              ]}
-            >
-              PLAYER 2
-            </Text>
-          </View>
-          <PlayerHand
-            playerKey="p3"
-            hand={hands.p3}
-            handSize={HAND_SIZE}
-            cardSpec={cardSpecs.p3}
-            getSlotBoxStyle={getSlotBoxStyle}
-            slotRefs={slotRefs}
-            styles={styles}
-            layout="col"
-            gapStyle={styles.mb2}
-            // See top player for interaction comments; the same rules apply per player.
-            canPeekAtIndex={(i) =>
+            canSwap: phase === 'turn' && turnStep === 'resolve' && turnPlayer === 'p2' && !!drawnCard,
+            onSwapAtIndex: (i) => swapWithHand('p2', i),
+            forceFaceUp: phase === 'gameOver',
+          }}
+        />
+
+        <PlayerSeat
+          styles={styles}
+          containerStyle={styles.leftPlayer}
+          hidden={phase === 'init'}
+          title="PLAYER 2"
+          active={
+            (phase === 'peek' && peekTurnPlayer === 'p3') ||
+            (phase === 'respond' && respondPlayer === 'p3') ||
+            (isPowerPhase && powerPlayer === 'p3')
+          }
+          handProps={{
+            playerKey: 'p3',
+            hand: hands.p3,
+            handSize: HAND_SIZE,
+            cardSpec: cardSpecs.p3,
+            getSlotBoxStyle,
+            slotRefs,
+            styles,
+            layout: 'col',
+            gapStyle: styles.mb2,
+
+            canPeekAtIndex: (i) =>
               phase === 'peek' &&
               peekTurnPlayer === 'p3' &&
-              (peekedByPlayer.p3[i] || peekedCountFor('p3') < 2)
-            }
-            onPeekAtIndex={(i) =>
-              markPeeked('p3', i)
-            }
-            canRespondAtIndex={(i) =>
+              (peekedByPlayer.p3[i] || peekedCountFor('p3') < 2),
+            onPeekAtIndex: (i) => markPeeked('p3', i),
+
+            canRespondAtIndex: (i) =>
               phase === 'respond' &&
               respondPlayer === 'p3' &&
               !!respondRank &&
-              !!hands.p3?.[i]
-            }
-            onRespondAtIndex={(i) => respondPlayFromHand('p3', i)}
-            canPowerAtIndex={(i) =>
+              !!hands.p3?.[i],
+            onRespondAtIndex: (i) => respondPlayFromHand('p3', i),
+
+            canPowerAtIndex: (i) =>
               isPowerPhase &&
               !!hands.p3?.[i] &&
-              (phase === 'look' ? !lookRevealed : true)
-            }
-            onPowerAtIndex={(i) => powerPress('p3', i)}
-            isFaceUpAtIndex={(i) =>
-              phase === 'look' &&
-              lookRevealed?.playerKey === 'p3' &&
-              lookRevealed?.index === i
-            }
-            canSwap={phase === 'turn' && turnStep === 'resolve' && turnPlayer === 'p3' && !!drawnCard}
-            onSwapAtIndex={(i) => swapWithHand('p3', i)}
-            forceFaceUp={phase === 'gameOver'}
-          />
-        </View>
+              (phase === 'look' ? !lookRevealed : true),
+            onPowerAtIndex: (i) => powerPress('p3', i),
+            isFaceUpAtIndex: (i) =>
+              phase === 'look' && lookRevealed?.playerKey === 'p3' && lookRevealed?.index === i,
 
-        {/*
-          Player 4 (Right)
-          UI seat mapping:
-          - This is `p4` (label says "PLAYER 4").
-          - Cards are rotated to face the table.
-        */}
-        <View style={[styles.rightPlayer, phase === 'init' ? styles.playersHidden : null]}>
-          <View
-            style={[
-              styles.nameplate,
-              phase === 'peek' && peekTurnPlayer === 'p4' ? styles.nameplateActive : null,
-              phase === 'respond' && respondPlayer === 'p4' ? styles.nameplateActive : null,
-              isPowerPhase && powerPlayer === 'p4' ? styles.nameplateActive : null,
-            ]}
-          >
-            <Text
-              style={[
-                styles.labelText,
-                phase === 'peek' && peekTurnPlayer === 'p4' ? styles.labelTextActive : null,
-                phase === 'respond' && respondPlayer === 'p4' ? styles.labelTextActive : null,
-                isPowerPhase && powerPlayer === 'p4' ? styles.labelTextActive : null,
-              ]}
-            >
-              PLAYER 4
-            </Text>
-          </View>
-          <PlayerHand
-            playerKey="p4"
-            hand={hands.p4}
-            handSize={HAND_SIZE}
-            cardSpec={cardSpecs.p4}
-            getSlotBoxStyle={getSlotBoxStyle}
-            slotRefs={slotRefs}
-            styles={styles}
-            layout="col"
-            gapStyle={styles.mb2}
-            canPeekAtIndex={(i) =>
+            canSwap: phase === 'turn' && turnStep === 'resolve' && turnPlayer === 'p3' && !!drawnCard,
+            onSwapAtIndex: (i) => swapWithHand('p3', i),
+            forceFaceUp: phase === 'gameOver',
+          }}
+        />
+
+        <PlayerSeat
+          styles={styles}
+          containerStyle={styles.rightPlayer}
+          hidden={phase === 'init'}
+          title="PLAYER 4"
+          active={
+            (phase === 'peek' && peekTurnPlayer === 'p4') ||
+            (phase === 'respond' && respondPlayer === 'p4') ||
+            (isPowerPhase && powerPlayer === 'p4')
+          }
+          handProps={{
+            playerKey: 'p4',
+            hand: hands.p4,
+            handSize: HAND_SIZE,
+            cardSpec: cardSpecs.p4,
+            getSlotBoxStyle,
+            slotRefs,
+            styles,
+            layout: 'col',
+            gapStyle: styles.mb2,
+
+            canPeekAtIndex: (i) =>
               phase === 'peek' &&
               peekTurnPlayer === 'p4' &&
-              (peekedByPlayer.p4[i] || peekedCountFor('p4') < 2)
-            }
-            onPeekAtIndex={(i) =>
-              markPeeked('p4', i)
-            }
-            canRespondAtIndex={(i) =>
+              (peekedByPlayer.p4[i] || peekedCountFor('p4') < 2),
+            onPeekAtIndex: (i) => markPeeked('p4', i),
+
+            canRespondAtIndex: (i) =>
               phase === 'respond' &&
               respondPlayer === 'p4' &&
               !!respondRank &&
-              !!hands.p4?.[i]
-            }
-            onRespondAtIndex={(i) => respondPlayFromHand('p4', i)}
-            canPowerAtIndex={(i) =>
+              !!hands.p4?.[i],
+            onRespondAtIndex: (i) => respondPlayFromHand('p4', i),
+
+            canPowerAtIndex: (i) =>
               isPowerPhase &&
               !!hands.p4?.[i] &&
-              (phase === 'look' ? !lookRevealed : true)
-            }
-            onPowerAtIndex={(i) => powerPress('p4', i)}
-            isFaceUpAtIndex={(i) =>
-              phase === 'look' &&
-              lookRevealed?.playerKey === 'p4' &&
-              lookRevealed?.index === i
-            }
-            canSwap={phase === 'turn' && turnStep === 'resolve' && turnPlayer === 'p4' && !!drawnCard}
-            onSwapAtIndex={(i) => swapWithHand('p4', i)}
-            forceFaceUp={phase === 'gameOver'}
-          />
-        </View>
+              (phase === 'look' ? !lookRevealed : true),
+            onPowerAtIndex: (i) => powerPress('p4', i),
+            isFaceUpAtIndex: (i) =>
+              phase === 'look' && lookRevealed?.playerKey === 'p4' && lookRevealed?.index === i,
+
+            canSwap: phase === 'turn' && turnStep === 'resolve' && turnPlayer === 'p4' && !!drawnCard,
+            onSwapAtIndex: (i) => swapWithHand('p4', i),
+            forceFaceUp: phase === 'gameOver',
+          }}
+        />
 
         {/*
           CenterArea contains deck + drawn card + discard pile.
@@ -476,76 +385,56 @@ export default function CardTableScreenRN() {
           onDeclareEnd={declareEnd}
         />
 
-        {/*
-          Player 1 (Bottom / Current User)
-          UI seat mapping:
-          - This is `p1` (label says "YOU - PLAYER 1").
-        */}
-        <View style={[styles.bottomPlayer, phase === 'init' ? styles.playersHidden : null]}>
-          <PlayerHand
-            playerKey="p1"
-            hand={hands.p1}
-            handSize={HAND_SIZE}
-            cardSpec={cardSpecs.p1}
-            getSlotBoxStyle={getSlotBoxStyle}
-            slotRefs={slotRefs}
-            styles={styles}
-            layout="row"
-            gapStyle={styles.mr8}
-            canPeekAtIndex={(i) =>
+        <PlayerSeat
+          styles={styles}
+          containerStyle={styles.bottomPlayer}
+          hidden={phase === 'init'}
+          title="YOU - PLAYER 1"
+          isYou={true}
+          nameplateAfter={true}
+          active={
+            (phase === 'peek' && peekTurnPlayer === 'p1') ||
+            (phase === 'respond' && respondPlayer === 'p1') ||
+            (phase === 'turn' && turnPlayer === 'p1') ||
+            (isPowerPhase && powerPlayer === 'p1')
+          }
+          handProps={{
+            playerKey: 'p1',
+            hand: hands.p1,
+            handSize: HAND_SIZE,
+            cardSpec: cardSpecs.p1,
+            getSlotBoxStyle,
+            slotRefs,
+            styles,
+            layout: 'row',
+            gapStyle: styles.mr8,
+
+            canPeekAtIndex: (i) =>
               phase === 'peek' &&
               peekTurnPlayer === 'p1' &&
-              (peekedByPlayer.p1[i] || peekedCountFor('p1') < 2)
-            }
-            onPeekAtIndex={(i) =>
-              markPeeked('p1', i)
-            }
-            canRespondAtIndex={(i) =>
+              (peekedByPlayer.p1[i] || peekedCountFor('p1') < 2),
+            onPeekAtIndex: (i) => markPeeked('p1', i),
+
+            canRespondAtIndex: (i) =>
               phase === 'respond' &&
               respondPlayer === 'p1' &&
               !!respondRank &&
-              !!hands.p1?.[i]
-            }
-            onRespondAtIndex={(i) => respondPlayFromHand('p1', i)}
-            canPowerAtIndex={(i) =>
+              !!hands.p1?.[i],
+            onRespondAtIndex: (i) => respondPlayFromHand('p1', i),
+
+            canPowerAtIndex: (i) =>
               isPowerPhase &&
               !!hands.p1?.[i] &&
-              (phase === 'look' ? !lookRevealed : true)
-            }
-            onPowerAtIndex={(i) => powerPress('p1', i)}
-            isFaceUpAtIndex={(i) =>
-              phase === 'look' &&
-              lookRevealed?.playerKey === 'p1' &&
-              lookRevealed?.index === i
-            }
-            canSwap={phase === 'turn' && turnStep === 'resolve' && turnPlayer === 'p1' && !!drawnCard}
-            onSwapAtIndex={(i) => swapWithHand('p1', i)}
-            forceFaceUp={phase === 'gameOver'}
-          />
-          <View
-            style={[
-              styles.nameplate,
-              styles.nameplateYou,
-              phase === 'peek' && peekTurnPlayer === 'p1' ? styles.nameplateActive : null,
-              phase === 'respond' && respondPlayer === 'p1' ? styles.nameplateActive : null,
-              phase === 'turn' && turnPlayer === 'p1' ? styles.nameplateActive : null,
-              isPowerPhase && powerPlayer === 'p1' ? styles.nameplateActive : null,
-            ]}
-          >
-            <Text
-              style={[
-                styles.labelText,
-                styles.labelTextYou,
-                phase === 'peek' && peekTurnPlayer === 'p1' ? styles.labelTextActive : null,
-                phase === 'respond' && respondPlayer === 'p1' ? styles.labelTextActive : null,
-                phase === 'turn' && turnPlayer === 'p1' ? styles.labelTextActive : null,
-                isPowerPhase && powerPlayer === 'p1' ? styles.labelTextActive : null,
-              ]}
-            >
-              YOU - PLAYER 1
-            </Text>
-          </View>
-        </View>
+              (phase === 'look' ? !lookRevealed : true),
+            onPowerAtIndex: (i) => powerPress('p1', i),
+            isFaceUpAtIndex: (i) =>
+              phase === 'look' && lookRevealed?.playerKey === 'p1' && lookRevealed?.index === i,
+
+            canSwap: phase === 'turn' && turnStep === 'resolve' && turnPlayer === 'p1' && !!drawnCard,
+            onSwapAtIndex: (i) => swapWithHand('p1', i),
+            forceFaceUp: phase === 'gameOver',
+          }}
+        />
       </View>
     </SafeAreaView>
   );
