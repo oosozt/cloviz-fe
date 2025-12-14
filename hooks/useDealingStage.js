@@ -4,6 +4,21 @@ import { Animated } from 'react-native';
 import { DEAL_ORDER, HAND_SIZE, createDeck, shuffleInPlace } from '../lib/cards';
 import { measureInWindowAsync } from '../lib/ui';
 
+/**
+ * Dealing stage hook.
+ *
+ * Responsibilities:
+ * - Create + shuffle the deck once at app start.
+ * - Measure the deck origin and each player's slot positions.
+ * - Animate dealing cards (deck -> slot) in round-robin order.
+ * - Populate `hands` and remove dealt cards from `deck`.
+ *
+ * Phases used by the screen:
+ * - `init`: wait for layout + a short delay
+ * - `dealing`: animate + deal 16 cards
+ * - `dealt`: finished dealing; next stage is `peek`
+ */
+
 export function useDealingStage({ phase, setPhase, cardSpecs, rootRef, deckOriginRef, slotRefs }) {
   // Stage 1: shuffle deck once at game start.
   const [deck, setDeck] = useState(() => shuffleInPlace(createDeck()));

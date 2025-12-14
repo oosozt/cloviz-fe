@@ -152,19 +152,25 @@ export const styles = StyleSheet.create({
   centerBlock: {
     alignItems: 'center',
   },
-  deckRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  deckActionWrap: {
+    position: 'relative',
+    width: 64,
+    height: 96,
+    // Shift the deck/button group a bit left overall.
+    marginRight: 44,
   },
   endButton: {
-    width: 72,
-    height: 96,
-    marginLeft: 12,
+    position: 'absolute',
+    left: 64,
+    top: 14,
+    width: 55,
+    height: 55,
     backgroundColor: '#dc2626',
     borderWidth: 4,
     borderColor: '#000000',
     alignItems: 'center',
     justifyContent: 'center',
+    borderRadius: 34,
 
     ...Platform.select({
       ios: {
@@ -183,12 +189,23 @@ export const styles = StyleSheet.create({
     opacity: 0.35,
   },
   endButtonPressed: {
-    opacity: 0.85,
+    opacity: 0.92,
+    transform: [{ translateY: 2 }],
   },
   endButtonText: {
     color: '#ffffff',
     fontFamily: getMonospaceFontFamily(),
-    fontSize: 18,
+    fontSize: 14,
+  },
+
+  endButtonGloss: {
+    position: 'absolute',
+    top: 10,
+    left: 12,
+    right: 12,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.25)',
   },
 
   gameOverOverlay: {

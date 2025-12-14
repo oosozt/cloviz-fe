@@ -4,6 +4,13 @@ import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { getCardDimensions } from '../lib/cards';
 import { getMonospaceFontFamily } from '../lib/ui';
 
+// PlayingCardRN is a purely visual card component.
+// It supports two independent interaction concepts:
+// - Flip (peek): handled locally via internal `isFlipped` state when `canFlip` is true
+// - Press (actions like swap/respond/power): handled by the parent via `pressEnabled` + `onPress`
+//
+// In other words: a card can be pressable even if it cannot flip.
+
 // A single playing card UI.
 // - Tap toggles between back/face when `canFlip` is true.
 // - When `pressEnabled` is true, `onPress` will fire even if the card cannot flip.

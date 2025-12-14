@@ -3,6 +3,16 @@ import { useEffect, useMemo, useState } from 'react';
 import { HAND_SIZE } from '../lib/cards';
 import { PLAYER_NUM_BY_KEY, TURN_ORDER } from '../lib/seating';
 
+/**
+ * Controlled "peek" stage at the start of the game.
+ *
+ * Rules implemented:
+ * - Turn-based, clockwise using `TURN_ORDER`.
+ * - Each player may peek (flip) up to 2 cards.
+ * - Each player gets `seconds` (default 3, we pass 5 from the screen).
+ * - When the last player finishes their window, phase advances to `peekDone`.
+ */
+
 export function usePeekStage({ phase, setPhase, seconds = 3 }) {
   const [peekTurnPlayer, setPeekTurnPlayer] = useState('p1');
   const [peekSecondsLeft, setPeekSecondsLeft] = useState(seconds);

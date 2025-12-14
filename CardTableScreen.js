@@ -16,14 +16,40 @@ import { useDealingStage } from './hooks/useDealingStage';
 import { usePeekStage } from './hooks/usePeekStage';
 import { useTurnStage } from './hooks/useTurnStage';
 
+/**
+ * Main "table" screen.
+ *
+ * This file is intentionally a *wiring layer*:
+ * - It renders the table layout (4 hands around a center area).
+ * - It owns a small `phase` state that acts like a finite-state machine (FSM).
+ * - It delegates gameplay logic/timers to hooks:
+ *   - `useDealingStage`: shuffles + deals with animation
+ *   - `usePeekStage`: controlled peek at start (2 cards/player, 5s window)
+ *   - `useTurnStage`: core game loop + respond window + end game + Q/J powers
+ *
+ * The important detail: UI seat positions are not the same as logical "Player 1..4"
+ * order in an abstract sense. We use player keys `p1..p4` everywhere, and
+ * `TURN_ORDER` in `lib/seating.js` defines the clockwise order that matches
+ * this UI layout.
+ */
+
 export default function CardTableScreenRN() {
+  // Phase/state machine.
+  // init -> dealing -> dealt -> peek -> peekDone -> turn -> (look/joker) -> respond -> turn -> ... -> gameOver
   const [phase, setPhase] = useState('init');
 
+  // Layout refs used ONLY for the dealing animation.
+  // We measure the absolute screen positions of the deck and each card slot, then
+  // animate a single "flying" card from deck -> target slot.
   const rootRef = useRef(null);
   const deckOriginRef = useRef(null);
   const slotRefs = useRef({ p1: [], p2: [], p3: [], p4: [] });
 
-  // Card render specs per player (sizes/orientation match current table UI).
+  // Card render specs per seat.
+  // These specs match how the table is drawn:
+  // - p1 bottom: larger vertical cards
+  // - p3 left / p4 right: rotated to face the center
+  // - p2 top: smaller vertical cards
   const cardSpecs = useMemo(
     () => ({
       p1: { size: 'medium', scale: 1, orientation: 'vertical', rotationDeg: 0 },
@@ -34,6 +60,8 @@ export default function CardTableScreenRN() {
     []
   );
 
+  // Dealing hook owns the deck + hands state at game start.
+  // The rest of the game continues using these same `deck` and `hands` objects.
   const { deck, setDeck, hands, setHands, dealingCard, dealXY, dealOpacity } = useDealingStage({
     phase,
     setPhase,
@@ -43,6 +71,7 @@ export default function CardTableScreenRN() {
     slotRefs,
   });
 
+  // Peek hook only controls the *peek stage* (timed, 2 looks/player).
   const {
     peekTurnPlayer,
     peekedByPlayer,
@@ -52,6 +81,12 @@ export default function CardTableScreenRN() {
     activePeekLabel,
   } = usePeekStage({ phase, setPhase, seconds: 5 });
 
+  // Turn hook controls the core loop once peek is done.
+  // This includes:
+  // - draw/resolve turn
+  // - respond window between turns
+  // - end-game declaration
+  // - special powers (Q/J)
   const {
     discardPile,
     turnPlayer,
@@ -62,6 +97,15 @@ export default function CardTableScreenRN() {
     respondRank,
     respondStatusLabel,
     respondTimerText,
+
+    powerType,
+    powerPlayer,
+    powerStatusLabel,
+    powerTimerText,
+    lookRevealed,
+    jokerPickA,
+    lookAtCard,
+    jokerPickCard,
 
     canDrawDeck,
     canDrawPile,
@@ -79,6 +123,11 @@ export default function CardTableScreenRN() {
     turnStatusLabel,
   } = useTurnStage({ phase, setPhase, deck, setDeck, hands, setHands });
 
+  // Convenience bool for any "special power" stage.
+  const isPowerPhase = phase === 'look' || phase === 'joker';
+
+  // The hook also computes scores, but the screen keeps a simple computed
+  // snapshot for the overlay.
   const finalScores = useMemo(() => {
     if (phase !== 'gameOver') return null;
 
@@ -104,6 +153,7 @@ export default function CardTableScreenRN() {
   }, [hands.p1, hands.p2, hands.p3, hands.p4, phase]);
 
   // Render-time slot sizing so the “empty slots” reserve space from the start.
+  // Important because hands can grow/shrink during respond penalties.
   const getSlotBoxStyle = (playerKey) => {
     const spec = cardSpecs[playerKey];
     const dims = getCardDimensions(spec.size, spec.orientation);
@@ -115,13 +165,23 @@ export default function CardTableScreenRN() {
     return { width: w, height: h };
   };
 
+  // Top-right status label shows which phase is active (and who is acting).
   const turnLabel = useMemo(() => {
     if (phase === 'peek') return activePeekLabel;
+    if (phase === 'look' || phase === 'joker') return powerStatusLabel;
     if (phase === 'respond') return respondStatusLabel;
     if (phase === 'turn') return turnStatusLabel;
     if (phase === 'gameOver') return 'GAME OVER';
     return '⏱';
-  }, [activePeekLabel, phase, respondStatusLabel, turnStatusLabel]);
+  }, [activePeekLabel, phase, powerStatusLabel, respondStatusLabel, turnStatusLabel]);
+
+  // Power stage: tap any player's card slots.
+  // - look: reveal exactly one card for the remainder of the 5s window
+  // - joker: pick two cards to swap (no reveal)
+  const powerPress = (playerKey, index) => {
+    if (phase === 'look') return lookAtCard(playerKey, index);
+    if (phase === 'joker') return jokerPickCard(playerKey, index);
+  };
 
   return (
     <SafeAreaView style={styles.screen}>
@@ -142,11 +202,23 @@ export default function CardTableScreenRN() {
           </View>
         ) : null}
 
-        {/* Timer - Top Right (absolute overlay) */}
+        {/*
+          Timer - Top Right (absolute overlay)
+          The label + timer text changes by phase:
+          - peek: uses peek countdown
+          - respond: uses respond countdown
+          - look/joker: uses power countdown
+        */}
         <View style={[styles.labelBox, styles.timer]}>
           <Text style={styles.labelText}>{turnLabel}</Text>
           <Text style={[styles.labelText, styles.timerText]}>
-            {phase === 'peek' ? timerText : phase === 'respond' ? respondTimerText : ''}
+            {phase === 'peek'
+              ? timerText
+              : phase === 'respond'
+                ? respondTimerText
+                : phase === 'look' || phase === 'joker'
+                  ? powerTimerText
+                  : ''}
           </Text>
         </View>
 
@@ -172,13 +244,18 @@ export default function CardTableScreenRN() {
           </Animated.View>
         ) : null}
 
-        {/* Player 3 (Top) */}
+        {/*
+          Player 3 (Top)
+          UI seat mapping:
+          - This is `p2` (see lib/seating.js). The label says "PLAYER 3".
+        */}
         <View style={[styles.topPlayer, phase === 'init' ? styles.playersHidden : null]}>
           <View
             style={[
               styles.nameplate,
               phase === 'peek' && peekTurnPlayer === 'p2' ? styles.nameplateActive : null,
               phase === 'respond' && respondPlayer === 'p2' ? styles.nameplateActive : null,
+              isPowerPhase && powerPlayer === 'p2' ? styles.nameplateActive : null,
             ]}
           >
             <Text
@@ -186,6 +263,7 @@ export default function CardTableScreenRN() {
                 styles.labelText,
                 phase === 'peek' && peekTurnPlayer === 'p2' ? styles.labelTextActive : null,
                 phase === 'respond' && respondPlayer === 'p2' ? styles.labelTextActive : null,
+                isPowerPhase && powerPlayer === 'p2' ? styles.labelTextActive : null,
               ]}
             >
               PLAYER 3
@@ -201,6 +279,7 @@ export default function CardTableScreenRN() {
             styles={styles}
             layout="row"
             gapStyle={styles.mr4}
+            // Peek phase: active player can flip up to 2 cards (face-down otherwise).
             canPeekAtIndex={(i) =>
               phase === 'peek' &&
               peekTurnPlayer === 'p2' &&
@@ -209,6 +288,7 @@ export default function CardTableScreenRN() {
             onPeekAtIndex={(i) =>
               markPeeked('p2', i)
             }
+            // Respond phase: active responder may play *any* card (cards are face-down).
             canRespondAtIndex={(i) =>
               phase === 'respond' &&
               respondPlayer === 'p2' &&
@@ -216,19 +296,39 @@ export default function CardTableScreenRN() {
               !!hands.p2?.[i]
             }
             onRespondAtIndex={(i) => respondPlayFromHand('p2', i)}
+            // Power phases (Q/J): allow tapping any existing card.
+            canPowerAtIndex={(i) =>
+              isPowerPhase &&
+              !!hands.p2?.[i] &&
+              (phase === 'look' ? !lookRevealed : true)
+            }
+            onPowerAtIndex={(i) => powerPress('p2', i)}
+            // Only the selected looked-at card is revealed during the look window.
+            isFaceUpAtIndex={(i) =>
+              phase === 'look' &&
+              lookRevealed?.playerKey === 'p2' &&
+              lookRevealed?.index === i
+            }
+            // Turn resolve: active player can swap the drawn card with a slot in their hand.
             canSwap={phase === 'turn' && turnStep === 'resolve' && turnPlayer === 'p2' && !!drawnCard}
             onSwapAtIndex={(i) => swapWithHand('p2', i)}
             forceFaceUp={phase === 'gameOver'}
           />
         </View>
 
-        {/* Player 2 (Left) - cards rotated to face the table */}
+        {/*
+          Player 2 (Left)
+          UI seat mapping:
+          - This is `p3` (label says "PLAYER 2").
+          - Cards are rotated to face the table.
+        */}
         <View style={[styles.leftPlayer, phase === 'init' ? styles.playersHidden : null]}>
           <View
             style={[
               styles.nameplate,
               phase === 'peek' && peekTurnPlayer === 'p3' ? styles.nameplateActive : null,
               phase === 'respond' && respondPlayer === 'p3' ? styles.nameplateActive : null,
+              isPowerPhase && powerPlayer === 'p3' ? styles.nameplateActive : null,
             ]}
           >
             <Text
@@ -236,6 +336,7 @@ export default function CardTableScreenRN() {
                 styles.labelText,
                 phase === 'peek' && peekTurnPlayer === 'p3' ? styles.labelTextActive : null,
                 phase === 'respond' && respondPlayer === 'p3' ? styles.labelTextActive : null,
+                isPowerPhase && powerPlayer === 'p3' ? styles.labelTextActive : null,
               ]}
             >
               PLAYER 2
@@ -251,6 +352,7 @@ export default function CardTableScreenRN() {
             styles={styles}
             layout="col"
             gapStyle={styles.mb2}
+            // See top player for interaction comments; the same rules apply per player.
             canPeekAtIndex={(i) =>
               phase === 'peek' &&
               peekTurnPlayer === 'p3' &&
@@ -266,19 +368,36 @@ export default function CardTableScreenRN() {
               !!hands.p3?.[i]
             }
             onRespondAtIndex={(i) => respondPlayFromHand('p3', i)}
+            canPowerAtIndex={(i) =>
+              isPowerPhase &&
+              !!hands.p3?.[i] &&
+              (phase === 'look' ? !lookRevealed : true)
+            }
+            onPowerAtIndex={(i) => powerPress('p3', i)}
+            isFaceUpAtIndex={(i) =>
+              phase === 'look' &&
+              lookRevealed?.playerKey === 'p3' &&
+              lookRevealed?.index === i
+            }
             canSwap={phase === 'turn' && turnStep === 'resolve' && turnPlayer === 'p3' && !!drawnCard}
             onSwapAtIndex={(i) => swapWithHand('p3', i)}
             forceFaceUp={phase === 'gameOver'}
           />
         </View>
 
-        {/* Player 4 (Right) - cards rotated to face the table */}
+        {/*
+          Player 4 (Right)
+          UI seat mapping:
+          - This is `p4` (label says "PLAYER 4").
+          - Cards are rotated to face the table.
+        */}
         <View style={[styles.rightPlayer, phase === 'init' ? styles.playersHidden : null]}>
           <View
             style={[
               styles.nameplate,
               phase === 'peek' && peekTurnPlayer === 'p4' ? styles.nameplateActive : null,
               phase === 'respond' && respondPlayer === 'p4' ? styles.nameplateActive : null,
+              isPowerPhase && powerPlayer === 'p4' ? styles.nameplateActive : null,
             ]}
           >
             <Text
@@ -286,6 +405,7 @@ export default function CardTableScreenRN() {
                 styles.labelText,
                 phase === 'peek' && peekTurnPlayer === 'p4' ? styles.labelTextActive : null,
                 phase === 'respond' && respondPlayer === 'p4' ? styles.labelTextActive : null,
+                isPowerPhase && powerPlayer === 'p4' ? styles.labelTextActive : null,
               ]}
             >
               PLAYER 4
@@ -316,12 +436,29 @@ export default function CardTableScreenRN() {
               !!hands.p4?.[i]
             }
             onRespondAtIndex={(i) => respondPlayFromHand('p4', i)}
+            canPowerAtIndex={(i) =>
+              isPowerPhase &&
+              !!hands.p4?.[i] &&
+              (phase === 'look' ? !lookRevealed : true)
+            }
+            onPowerAtIndex={(i) => powerPress('p4', i)}
+            isFaceUpAtIndex={(i) =>
+              phase === 'look' &&
+              lookRevealed?.playerKey === 'p4' &&
+              lookRevealed?.index === i
+            }
             canSwap={phase === 'turn' && turnStep === 'resolve' && turnPlayer === 'p4' && !!drawnCard}
             onSwapAtIndex={(i) => swapWithHand('p4', i)}
             forceFaceUp={phase === 'gameOver'}
           />
         </View>
 
+        {/*
+          CenterArea contains deck + drawn card + discard pile.
+          - Deck tap: draw from deck
+          - Pile tap: during turn, either draw the pile (turnStep=draw) or discard drawn card (turnStep=resolve)
+          - END button: only enabled at the start of respond window (player who just played)
+        */}
         <CenterArea
           styles={styles}
           deckOriginRef={deckOriginRef}
@@ -339,7 +476,11 @@ export default function CardTableScreenRN() {
           onDeclareEnd={declareEnd}
         />
 
-        {/* Player 1 (Bottom / Current User) */}
+        {/*
+          Player 1 (Bottom / Current User)
+          UI seat mapping:
+          - This is `p1` (label says "YOU - PLAYER 1").
+        */}
         <View style={[styles.bottomPlayer, phase === 'init' ? styles.playersHidden : null]}>
           <PlayerHand
             playerKey="p1"
@@ -366,6 +507,17 @@ export default function CardTableScreenRN() {
               !!hands.p1?.[i]
             }
             onRespondAtIndex={(i) => respondPlayFromHand('p1', i)}
+            canPowerAtIndex={(i) =>
+              isPowerPhase &&
+              !!hands.p1?.[i] &&
+              (phase === 'look' ? !lookRevealed : true)
+            }
+            onPowerAtIndex={(i) => powerPress('p1', i)}
+            isFaceUpAtIndex={(i) =>
+              phase === 'look' &&
+              lookRevealed?.playerKey === 'p1' &&
+              lookRevealed?.index === i
+            }
             canSwap={phase === 'turn' && turnStep === 'resolve' && turnPlayer === 'p1' && !!drawnCard}
             onSwapAtIndex={(i) => swapWithHand('p1', i)}
             forceFaceUp={phase === 'gameOver'}
@@ -377,6 +529,7 @@ export default function CardTableScreenRN() {
               phase === 'peek' && peekTurnPlayer === 'p1' ? styles.nameplateActive : null,
               phase === 'respond' && respondPlayer === 'p1' ? styles.nameplateActive : null,
               phase === 'turn' && turnPlayer === 'p1' ? styles.nameplateActive : null,
+              isPowerPhase && powerPlayer === 'p1' ? styles.nameplateActive : null,
             ]}
           >
             <Text
@@ -386,6 +539,7 @@ export default function CardTableScreenRN() {
                 phase === 'peek' && peekTurnPlayer === 'p1' ? styles.labelTextActive : null,
                 phase === 'respond' && respondPlayer === 'p1' ? styles.labelTextActive : null,
                 phase === 'turn' && turnPlayer === 'p1' ? styles.labelTextActive : null,
+                isPowerPhase && powerPlayer === 'p1' ? styles.labelTextActive : null,
               ]}
             >
               YOU - PLAYER 1
