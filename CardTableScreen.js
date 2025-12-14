@@ -74,6 +74,7 @@ function getMonospaceFontFamily() {
 // - `scale` slightly increases/decreases the rendered size.
 export function PlayingCardRN({
   faceDown = true,
+  canFlip = false,
   size = 'medium',
   orientation = 'horizontal',
   rotationDeg = 0,
@@ -81,8 +82,13 @@ export function PlayingCardRN({
   value = 'A',
   suit = '♠',
   style,
+  onPress,
 }) {
   const [isFlipped, setIsFlipped] = useState(false);
+
+  useEffect(() => {
+    if (!canFlip && isFlipped) setIsFlipped(false);
+  }, [canFlip, isFlipped]);
 
   const isRed = suit === '♥' || suit === '♦';
   // If `faceDown` is true, we still allow tap-to-reveal via `isFlipped`.
@@ -102,7 +108,11 @@ export function PlayingCardRN({
 
   return (
     <Pressable
-      onPress={() => setIsFlipped((prev) => !prev)}
+      onPress={() => {
+        if (!canFlip) return;
+        onPress?.();
+        setIsFlipped((prev) => !prev);
+      }}
       style={({ pressed }) => {
         const transforms = [];
         if (rotationDeg) transforms.push({ rotateZ: `${rotationDeg}deg` });
@@ -264,24 +274,85 @@ export default function CardTableScreenRN() {
     setPhase('dealing');
   }, [layout, phase, startDealingRequested]);
 
-  // Simple looping countdown: 10 → 0, then resets to 10.
-  const [remainingSeconds, setRemainingSeconds] = useState(10);
+  // Stage 3 (new): peek/lookup stage.
+  // Each player, in clockwise order (p1 → p2 → p3 → p4), has 5 seconds
+  // to look at (flip) exactly 2 of their 4 cards.
+  // NOTE: The current table layout maps keys to seats like:
+  // - p1: bottom (Player 1)
+  // - p3: left   (Player 2)
+  // - p2: top    (Player 3)
+  // - p4: right  (Player 4)
+  const PEEK_SECONDS = 5;
+  const PEEK_TURN_ORDER = ['p1', 'p3', 'p2', 'p4'];
+  const PLAYER_NUM_BY_KEY = { p1: 1, p2: 3, p3: 2, p4: 4 };
+  const [peekTurnPlayer, setPeekTurnPlayer] = useState('p1');
+  const [peekSecondsLeft, setPeekSecondsLeft] = useState(PEEK_SECONDS);
+  const [peekedByPlayer, setPeekedByPlayer] = useState(() => ({
+    p1: Array(HAND_SIZE).fill(false),
+    p2: Array(HAND_SIZE).fill(false),
+    p3: Array(HAND_SIZE).fill(false),
+    p4: Array(HAND_SIZE).fill(false),
+  }));
+
+  const peekedCountFor = (playerKey) => peekedByPlayer[playerKey].filter(Boolean).length;
+
+  const advancePeekTurn = () => {
+    setPeekTurnPlayer((prev) => {
+      const idx = PEEK_TURN_ORDER.indexOf(prev);
+      if (idx < 0) return 'p1';
+      if (idx === PEEK_TURN_ORDER.length - 1) {
+        setPhase('peekDone');
+        return prev;
+      }
+      return PEEK_TURN_ORDER[idx + 1];
+    });
+  };
 
   useEffect(() => {
-    // One interval for the lifetime of this screen.
+    if (phase !== 'peek') return;
+
+    setPeekSecondsLeft(PEEK_SECONDS);
     const intervalId = setInterval(() => {
-      setRemainingSeconds((prev) => (prev <= 0 ? 10 : prev - 1));
+      setPeekSecondsLeft((prev) => prev - 1);
     }, 1000);
-
     return () => clearInterval(intervalId);
-  }, []);
+  }, [phase, peekTurnPlayer]);
 
-  // Format as m:ss for display (e.g. 0:09).
+  useEffect(() => {
+    if (phase !== 'peek') return;
+    if (peekSecondsLeft > 0) return;
+    advancePeekTurn();
+  }, [peekSecondsLeft, phase]);
+
+  useEffect(() => {
+    if (phase !== 'peek') return;
+    // When the peek stage starts, always begin with Player 1.
+    setPeekTurnPlayer('p1');
+    setPeekedByPlayer({
+      p1: Array(HAND_SIZE).fill(false),
+      p2: Array(HAND_SIZE).fill(false),
+      p3: Array(HAND_SIZE).fill(false),
+      p4: Array(HAND_SIZE).fill(false),
+    });
+  }, [phase]);
+
+  // Transition into the peek stage after dealing completes.
+  useEffect(() => {
+    if (phase !== 'dealt') return;
+    setPhase('peek');
+  }, [phase]);
+
   const timerText = useMemo(() => {
-    const mins = Math.floor(remainingSeconds / 60);
-    const secs = remainingSeconds % 60;
+    const clamped = Math.max(0, peekSecondsLeft);
+    const mins = Math.floor(clamped / 60);
+    const secs = clamped % 60;
     return `${mins}:${String(secs).padStart(2, '0')}`;
-  }, [remainingSeconds]);
+  }, [peekSecondsLeft]);
+
+  const activePeekLabel = useMemo(() => {
+    const n = PLAYER_NUM_BY_KEY[peekTurnPlayer] ?? 1;
+    return `P${n} LOOK ${peekedCountFor(peekTurnPlayer)}/2`;
+  }, [PLAYER_NUM_BY_KEY, peekTurnPlayer, peekedByPlayer]);
 
   // Stage 2: deal 16 cards (4 to each player) round-robin with a simple
   // “fly from deck to slot” animation.
@@ -346,8 +417,8 @@ export default function CardTableScreenRN() {
       <View ref={rootRef} collapsable={false} style={styles.root}>
         {/* Timer - Top Right (absolute overlay) */}
         <View style={[styles.labelBox, styles.timer]}>
-          <Text style={styles.labelText}>⏱</Text>
-          <Text style={[styles.labelText, styles.timerText]}>{timerText}</Text>
+          <Text style={styles.labelText}>{phase === 'peek' ? activePeekLabel : '⏱'}</Text>
+          <Text style={[styles.labelText, styles.timerText]}>{phase === 'peek' ? timerText : ''}</Text>
         </View>
 
         {/* Animated dealing card (shown only during stage 2) */}
@@ -374,12 +445,16 @@ export default function CardTableScreenRN() {
 
         {/* Player 3 (Top) */}
         <View style={[styles.topPlayer, phase === 'init' ? styles.playersHidden : null]}>
-          <View style={styles.nameplate}>
-            <Text style={styles.labelText}>PLAYER 3</Text>
+          <View style={[styles.nameplate, phase === 'peek' && peekTurnPlayer === 'p2' ? styles.nameplateActive : null]}>
+            <Text style={[styles.labelText, phase === 'peek' && peekTurnPlayer === 'p2' ? styles.labelTextActive : null]}>PLAYER 3</Text>
           </View>
           <View style={styles.row}>
             {Array.from({ length: HAND_SIZE }).map((_, i) => {
               const card = hands.p2[i];
+              const canPeekHere =
+                phase === 'peek' &&
+                peekTurnPlayer === 'p2' &&
+                (peekedByPlayer.p2[i] || peekedCountFor('p2') < 2);
               return (
                 <View
                   key={`p2-slot-${i}`}
@@ -400,6 +475,15 @@ export default function CardTableScreenRN() {
                       rotationDeg={cardSpecs.p2.rotationDeg}
                       value={card.rank}
                       suit={card.suit}
+                      faceDown={true}
+                      canFlip={canPeekHere}
+                      onPress={() => {
+                        if (!canPeekHere) return;
+                        setPeekedByPlayer((prev) => {
+                          if (prev.p2[i]) return prev;
+                          return { ...prev, p2: prev.p2.map((v, idx) => (idx === i ? true : v)) };
+                        });
+                      }}
                     />
                   ) : null}
                 </View>
@@ -410,12 +494,16 @@ export default function CardTableScreenRN() {
 
         {/* Player 2 (Left) - cards rotated to face the table */}
         <View style={[styles.leftPlayer, phase === 'init' ? styles.playersHidden : null]}>
-          <View style={styles.nameplate}>
-            <Text style={styles.labelText}>PLAYER 2</Text>
+          <View style={[styles.nameplate, phase === 'peek' && peekTurnPlayer === 'p3' ? styles.nameplateActive : null]}>
+            <Text style={[styles.labelText, phase === 'peek' && peekTurnPlayer === 'p3' ? styles.labelTextActive : null]}>PLAYER 2</Text>
           </View>
           <View style={styles.col}>
             {Array.from({ length: HAND_SIZE }).map((_, i) => {
               const card = hands.p3[i];
+              const canPeekHere =
+                phase === 'peek' &&
+                peekTurnPlayer === 'p3' &&
+                (peekedByPlayer.p3[i] || peekedCountFor('p3') < 2);
               return (
                 <View
                   key={`p3-slot-${i}`}
@@ -436,6 +524,15 @@ export default function CardTableScreenRN() {
                       rotationDeg={cardSpecs.p3.rotationDeg}
                       value={card.rank}
                       suit={card.suit}
+                      faceDown={true}
+                      canFlip={canPeekHere}
+                      onPress={() => {
+                        if (!canPeekHere) return;
+                        setPeekedByPlayer((prev) => {
+                          if (prev.p3[i]) return prev;
+                          return { ...prev, p3: prev.p3.map((v, idx) => (idx === i ? true : v)) };
+                        });
+                      }}
                     />
                   ) : null}
                 </View>
@@ -446,12 +543,16 @@ export default function CardTableScreenRN() {
 
         {/* Player 4 (Right) - cards rotated to face the table */}
         <View style={[styles.rightPlayer, phase === 'init' ? styles.playersHidden : null]}>
-          <View style={styles.nameplate}>
-            <Text style={styles.labelText}>PLAYER 4</Text>
+          <View style={[styles.nameplate, phase === 'peek' && peekTurnPlayer === 'p4' ? styles.nameplateActive : null]}>
+            <Text style={[styles.labelText, phase === 'peek' && peekTurnPlayer === 'p4' ? styles.labelTextActive : null]}>PLAYER 4</Text>
           </View>
           <View style={styles.col}>
             {Array.from({ length: HAND_SIZE }).map((_, i) => {
               const card = hands.p4[i];
+              const canPeekHere =
+                phase === 'peek' &&
+                peekTurnPlayer === 'p4' &&
+                (peekedByPlayer.p4[i] || peekedCountFor('p4') < 2);
               return (
                 <View
                   key={`p4-slot-${i}`}
@@ -472,6 +573,15 @@ export default function CardTableScreenRN() {
                       rotationDeg={cardSpecs.p4.rotationDeg}
                       value={card.rank}
                       suit={card.suit}
+                      faceDown={true}
+                      canFlip={canPeekHere}
+                      onPress={() => {
+                        if (!canPeekHere) return;
+                        setPeekedByPlayer((prev) => {
+                          if (prev.p4[i]) return prev;
+                          return { ...prev, p4: prev.p4.map((v, idx) => (idx === i ? true : v)) };
+                        });
+                      }}
                     />
                   ) : null}
                 </View>
@@ -519,6 +629,10 @@ export default function CardTableScreenRN() {
           <View style={styles.row}>
             {Array.from({ length: HAND_SIZE }).map((_, i) => {
               const card = hands.p1[i];
+              const canPeekHere =
+                phase === 'peek' &&
+                peekTurnPlayer === 'p1' &&
+                (peekedByPlayer.p1[i] || peekedCountFor('p1') < 2);
               return (
                 <View
                   key={`p1-slot-${i}`}
@@ -540,14 +654,36 @@ export default function CardTableScreenRN() {
                       value={card.rank}
                       suit={card.suit}
                       faceDown={true}
+                      canFlip={canPeekHere}
+                      onPress={() => {
+                        if (!canPeekHere) return;
+                        setPeekedByPlayer((prev) => {
+                          if (prev.p1[i]) return prev;
+                          return { ...prev, p1: prev.p1.map((v, idx) => (idx === i ? true : v)) };
+                        });
+                      }}
                     />
                   ) : null}
                 </View>
               );
             })}
           </View>
-          <View style={[styles.nameplate, styles.nameplateYou]}>
-            <Text style={[styles.labelText, styles.labelTextYou]}>YOU - PLAYER 1</Text>
+          <View
+            style={[
+              styles.nameplate,
+              styles.nameplateYou,
+              phase === 'peek' && peekTurnPlayer === 'p1' ? styles.nameplateActive : null,
+            ]}
+          >
+            <Text
+              style={[
+                styles.labelText,
+                styles.labelTextYou,
+                phase === 'peek' && peekTurnPlayer === 'p1' ? styles.labelTextActive : null,
+              ]}
+            >
+              YOU - PLAYER 1
+            </Text>
           </View>
         </View>
       </View>
@@ -643,6 +779,12 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   labelTextYou: {
+    color: '#ffffff',
+  },
+  nameplateActive: {
+    backgroundColor: '#000000',
+  },
+  labelTextActive: {
     color: '#ffffff',
   },
 
