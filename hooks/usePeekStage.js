@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { HAND_SIZE } from '../lib/cards';
 import { PLAYER_NUM_BY_KEY, TURN_ORDER } from '../lib/seating';
 
-export function usePeekStage({ phase, setPhase, seconds = 5 }) {
+export function usePeekStage({ phase, setPhase, seconds = 3 }) {
   const [peekTurnPlayer, setPeekTurnPlayer] = useState('p1');
   const [peekSecondsLeft, setPeekSecondsLeft] = useState(seconds);
   const [peekedByPlayer, setPeekedByPlayer] = useState(() => ({

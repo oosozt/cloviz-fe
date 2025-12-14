@@ -96,9 +96,13 @@ export const styles = StyleSheet.create({
   },
 
   actionHaloFill: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    bottom: -6,
+    left: -6,
     backgroundColor: 'rgba(250, 204, 21, 0.45)',
-    borderRadius: 6,
+    borderRadius: 10,
   },
 
   topPlayer: {
@@ -147,6 +151,81 @@ export const styles = StyleSheet.create({
   },
   centerBlock: {
     alignItems: 'center',
+  },
+  deckRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  endButton: {
+    width: 72,
+    height: 96,
+    marginLeft: 12,
+    backgroundColor: '#dc2626',
+    borderWidth: 4,
+    borderColor: '#000000',
+    alignItems: 'center',
+    justifyContent: 'center',
+
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOpacity: 1,
+        shadowRadius: 0,
+        shadowOffset: { width: 4, height: 4 },
+      },
+      android: {
+        elevation: 6,
+      },
+      default: {},
+    }),
+  },
+  endButtonDisabled: {
+    opacity: 0.35,
+  },
+  endButtonPressed: {
+    opacity: 0.85,
+  },
+  endButtonText: {
+    color: '#ffffff',
+    fontFamily: getMonospaceFontFamily(),
+    fontSize: 18,
+  },
+
+  gameOverOverlay: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    top: 80,
+    backgroundColor: '#ffffff',
+    borderWidth: 4,
+    borderColor: '#000000',
+    padding: 12,
+    zIndex: 50,
+
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOpacity: 1,
+        shadowRadius: 0,
+        shadowOffset: { width: 4, height: 4 },
+      },
+      android: {
+        elevation: 8,
+      },
+      default: {},
+    }),
+  },
+  gameOverTitle: {
+    fontFamily: getMonospaceFontFamily(),
+    color: '#000000',
+    fontSize: 16,
+    marginBottom: 8,
+  },
+  gameOverLine: {
+    fontFamily: getMonospaceFontFamily(),
+    color: '#000000',
+    fontSize: 14,
+    marginBottom: 4,
   },
   mt24: {
     marginTop: 24,

@@ -15,33 +15,50 @@ export function CenterArea({
   canDrawPile,
   discardPileTop,
   onPilePress,
+
+  canDeclareEnd,
+  onDeclareEnd,
 }) {
   return (
     <View style={styles.centerArea}>
       <View style={styles.centerStack}>
         {/* Deck */}
         <View style={styles.centerBlock}>
-          <Pressable
-            onPress={onDrawDeck}
-            style={{ position: 'relative', width: 64, height: 96, padding: 4, borderRadius: 6 }}
-          >
-            {canDrawDeck ? <View pointerEvents="none" style={styles.actionHaloFill} /> : null}
+          <View style={styles.deckRow}>
+            <Pressable
+              onPress={onDrawDeck}
+              style={{ position: 'relative', width: 64, height: 96, padding: 4, borderRadius: 6 }}
+            >
+              {canDrawDeck ? <View pointerEvents="none" style={styles.actionHaloFill} /> : null}
 
-            {/* Deck origin (measured) is the top card position */}
-            <View ref={deckOriginRef} collapsable={false}>
-              <PlayingCardRN size="small" orientation="vertical" />
-            </View>
-            <PlayingCardRN
-              size="small"
-              orientation="vertical"
-              style={{ position: 'absolute', top: 4, left: 4 }}
-            />
-            <PlayingCardRN
-              size="small"
-              orientation="vertical"
-              style={{ position: 'absolute', top: 8, left: 8 }}
-            />
-          </Pressable>
+              {/* Deck origin (measured) is the top card position */}
+              <View ref={deckOriginRef} collapsable={false}>
+                <PlayingCardRN size="small" orientation="vertical" />
+              </View>
+              <PlayingCardRN
+                size="small"
+                orientation="vertical"
+                style={{ position: 'absolute', top: 4, left: 4 }}
+              />
+              <PlayingCardRN
+                size="small"
+                orientation="vertical"
+                style={{ position: 'absolute', top: 8, left: 8 }}
+              />
+            </Pressable>
+
+            <Pressable
+              onPress={onDeclareEnd}
+              disabled={!canDeclareEnd}
+              style={({ pressed }) => [
+                styles.endButton,
+                !canDeclareEnd ? styles.endButtonDisabled : null,
+                pressed && canDeclareEnd ? styles.endButtonPressed : null,
+              ]}
+            >
+              <Text style={styles.endButtonText}>END</Text>
+            </Pressable>
+          </View>
           <Text style={styles.caption}>DECK</Text>
         </View>
 

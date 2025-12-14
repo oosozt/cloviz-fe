@@ -29,7 +29,7 @@ export function useDealingStage({ phase, setPhase, cardSpecs, rootRef, deckOrigi
       tries += 1;
 
       const allSlotRefsReady = DEAL_ORDER.every(
-        (p) => slotRefs.current[p] && slotRefs.current[p].filter(Boolean).length === HAND_SIZE
+        (p) => slotRefs.current[p] && slotRefs.current[p].filter(Boolean).length >= HAND_SIZE
       );
       if (!rootRef.current || !deckOriginRef.current || !allSlotRefsReady) {
         if (!cancelled && tries < 60) setTimeout(tryMeasure, 50);

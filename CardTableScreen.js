@@ -57,6 +57,12 @@ export default function CardTableScreenRN() {
     turnPlayer,
     turnStep,
     drawnCard,
+
+    respondPlayer,
+    respondRank,
+    respondStatusLabel,
+    respondTimerText,
+
     canDrawDeck,
     canDrawPile,
     canDiscardToPile,
@@ -64,8 +70,38 @@ export default function CardTableScreenRN() {
     drawFromPile,
     discardDrawnToPile,
     swapWithHand,
+
+    respondPlayFromHand,
+
+    canDeclareEnd,
+    declareEnd,
+    gameOverResult,
     turnStatusLabel,
   } = useTurnStage({ phase, setPhase, deck, setDeck, hands, setHands });
+
+  const finalScores = useMemo(() => {
+    if (phase !== 'gameOver') return null;
+
+    const valueOf = (rank) => {
+      if (rank === 'A') return 1;
+      if (rank === 'J') return 11;
+      if (rank === 'Q') return 12;
+      if (rank === 'K') return 0;
+      const n = Number(rank);
+      return Number.isFinite(n) ? n : 0;
+    };
+
+    const scores = {
+      p1: (hands.p1 ?? []).reduce((s, c) => s + valueOf(c?.rank), 0),
+      p2: (hands.p2 ?? []).reduce((s, c) => s + valueOf(c?.rank), 0),
+      p3: (hands.p3 ?? []).reduce((s, c) => s + valueOf(c?.rank), 0),
+      p4: (hands.p4 ?? []).reduce((s, c) => s + valueOf(c?.rank), 0),
+    };
+
+    const min = Math.min(scores.p1, scores.p2, scores.p3, scores.p4);
+    const winners = Object.keys(scores).filter((k) => scores[k] === min);
+    return { scores, winners };
+  }, [hands.p1, hands.p2, hands.p3, hands.p4, phase]);
 
   // Render-time slot sizing so the “empty slots” reserve space from the start.
   const getSlotBoxStyle = (playerKey) => {
@@ -81,17 +117,37 @@ export default function CardTableScreenRN() {
 
   const turnLabel = useMemo(() => {
     if (phase === 'peek') return activePeekLabel;
+    if (phase === 'respond') return respondStatusLabel;
     if (phase === 'turn') return turnStatusLabel;
+    if (phase === 'gameOver') return 'GAME OVER';
     return '⏱';
-  }, [activePeekLabel, phase, turnStatusLabel]);
+  }, [activePeekLabel, phase, respondStatusLabel, turnStatusLabel]);
 
   return (
     <SafeAreaView style={styles.screen}>
       <View ref={rootRef} collapsable={false} style={styles.root}>
+        {phase === 'gameOver' && finalScores ? (
+          <View style={styles.gameOverOverlay} pointerEvents="none">
+            <Text style={styles.gameOverTitle}>FINAL SCORES</Text>
+            <Text style={styles.gameOverLine}>P1: {finalScores.scores?.p1 ?? 0}</Text>
+            <Text style={styles.gameOverLine}>P2: {finalScores.scores?.p3 ?? 0}</Text>
+            <Text style={styles.gameOverLine}>P3: {finalScores.scores?.p2 ?? 0}</Text>
+            <Text style={styles.gameOverLine}>P4: {finalScores.scores?.p4 ?? 0}</Text>
+            <Text style={styles.gameOverLine}>
+              WINNER:{' '}
+              {(finalScores.winners ?? [])
+                .map((k) => (k === 'p1' ? 'P1' : k === 'p3' ? 'P2' : k === 'p2' ? 'P3' : 'P4'))
+                .join(' / ') || '-'}
+            </Text>
+          </View>
+        ) : null}
+
         {/* Timer - Top Right (absolute overlay) */}
         <View style={[styles.labelBox, styles.timer]}>
           <Text style={styles.labelText}>{turnLabel}</Text>
-          <Text style={[styles.labelText, styles.timerText]}>{phase === 'peek' ? timerText : ''}</Text>
+          <Text style={[styles.labelText, styles.timerText]}>
+            {phase === 'peek' ? timerText : phase === 'respond' ? respondTimerText : ''}
+          </Text>
         </View>
 
         {/* Animated dealing card (shown only during stage 2) */}
@@ -118,8 +174,22 @@ export default function CardTableScreenRN() {
 
         {/* Player 3 (Top) */}
         <View style={[styles.topPlayer, phase === 'init' ? styles.playersHidden : null]}>
-          <View style={[styles.nameplate, phase === 'peek' && peekTurnPlayer === 'p2' ? styles.nameplateActive : null]}>
-            <Text style={[styles.labelText, phase === 'peek' && peekTurnPlayer === 'p2' ? styles.labelTextActive : null]}>PLAYER 3</Text>
+          <View
+            style={[
+              styles.nameplate,
+              phase === 'peek' && peekTurnPlayer === 'p2' ? styles.nameplateActive : null,
+              phase === 'respond' && respondPlayer === 'p2' ? styles.nameplateActive : null,
+            ]}
+          >
+            <Text
+              style={[
+                styles.labelText,
+                phase === 'peek' && peekTurnPlayer === 'p2' ? styles.labelTextActive : null,
+                phase === 'respond' && respondPlayer === 'p2' ? styles.labelTextActive : null,
+              ]}
+            >
+              PLAYER 3
+            </Text>
           </View>
           <PlayerHand
             playerKey="p2"
@@ -139,15 +209,37 @@ export default function CardTableScreenRN() {
             onPeekAtIndex={(i) =>
               markPeeked('p2', i)
             }
+            canRespondAtIndex={(i) =>
+              phase === 'respond' &&
+              respondPlayer === 'p2' &&
+              !!respondRank &&
+              !!hands.p2?.[i]
+            }
+            onRespondAtIndex={(i) => respondPlayFromHand('p2', i)}
             canSwap={phase === 'turn' && turnStep === 'resolve' && turnPlayer === 'p2' && !!drawnCard}
             onSwapAtIndex={(i) => swapWithHand('p2', i)}
+            forceFaceUp={phase === 'gameOver'}
           />
         </View>
 
         {/* Player 2 (Left) - cards rotated to face the table */}
         <View style={[styles.leftPlayer, phase === 'init' ? styles.playersHidden : null]}>
-          <View style={[styles.nameplate, phase === 'peek' && peekTurnPlayer === 'p3' ? styles.nameplateActive : null]}>
-            <Text style={[styles.labelText, phase === 'peek' && peekTurnPlayer === 'p3' ? styles.labelTextActive : null]}>PLAYER 2</Text>
+          <View
+            style={[
+              styles.nameplate,
+              phase === 'peek' && peekTurnPlayer === 'p3' ? styles.nameplateActive : null,
+              phase === 'respond' && respondPlayer === 'p3' ? styles.nameplateActive : null,
+            ]}
+          >
+            <Text
+              style={[
+                styles.labelText,
+                phase === 'peek' && peekTurnPlayer === 'p3' ? styles.labelTextActive : null,
+                phase === 'respond' && respondPlayer === 'p3' ? styles.labelTextActive : null,
+              ]}
+            >
+              PLAYER 2
+            </Text>
           </View>
           <PlayerHand
             playerKey="p3"
@@ -167,15 +259,37 @@ export default function CardTableScreenRN() {
             onPeekAtIndex={(i) =>
               markPeeked('p3', i)
             }
+            canRespondAtIndex={(i) =>
+              phase === 'respond' &&
+              respondPlayer === 'p3' &&
+              !!respondRank &&
+              !!hands.p3?.[i]
+            }
+            onRespondAtIndex={(i) => respondPlayFromHand('p3', i)}
             canSwap={phase === 'turn' && turnStep === 'resolve' && turnPlayer === 'p3' && !!drawnCard}
             onSwapAtIndex={(i) => swapWithHand('p3', i)}
+            forceFaceUp={phase === 'gameOver'}
           />
         </View>
 
         {/* Player 4 (Right) - cards rotated to face the table */}
         <View style={[styles.rightPlayer, phase === 'init' ? styles.playersHidden : null]}>
-          <View style={[styles.nameplate, phase === 'peek' && peekTurnPlayer === 'p4' ? styles.nameplateActive : null]}>
-            <Text style={[styles.labelText, phase === 'peek' && peekTurnPlayer === 'p4' ? styles.labelTextActive : null]}>PLAYER 4</Text>
+          <View
+            style={[
+              styles.nameplate,
+              phase === 'peek' && peekTurnPlayer === 'p4' ? styles.nameplateActive : null,
+              phase === 'respond' && respondPlayer === 'p4' ? styles.nameplateActive : null,
+            ]}
+          >
+            <Text
+              style={[
+                styles.labelText,
+                phase === 'peek' && peekTurnPlayer === 'p4' ? styles.labelTextActive : null,
+                phase === 'respond' && respondPlayer === 'p4' ? styles.labelTextActive : null,
+              ]}
+            >
+              PLAYER 4
+            </Text>
           </View>
           <PlayerHand
             playerKey="p4"
@@ -195,8 +309,16 @@ export default function CardTableScreenRN() {
             onPeekAtIndex={(i) =>
               markPeeked('p4', i)
             }
+            canRespondAtIndex={(i) =>
+              phase === 'respond' &&
+              respondPlayer === 'p4' &&
+              !!respondRank &&
+              !!hands.p4?.[i]
+            }
+            onRespondAtIndex={(i) => respondPlayFromHand('p4', i)}
             canSwap={phase === 'turn' && turnStep === 'resolve' && turnPlayer === 'p4' && !!drawnCard}
             onSwapAtIndex={(i) => swapWithHand('p4', i)}
+            forceFaceUp={phase === 'gameOver'}
           />
         </View>
 
@@ -206,15 +328,15 @@ export default function CardTableScreenRN() {
           canDrawDeck={canDrawDeck}
           onDrawDeck={drawFromDeck}
           drawnCard={drawnCard}
-          canDrawPile={
-            canDrawPile ||
-            canDiscardToPile
-          }
+          canDrawPile={phase === 'turn' ? canDrawPile || canDiscardToPile : false}
           discardPileTop={discardPile.length > 0 ? discardPile[discardPile.length - 1] : null}
           onPilePress={() => {
+            if (phase !== 'turn') return;
             if (turnStep === 'draw') drawFromPile();
             else discardDrawnToPile();
           }}
+          canDeclareEnd={canDeclareEnd}
+          onDeclareEnd={declareEnd}
         />
 
         {/* Player 1 (Bottom / Current User) */}
@@ -237,14 +359,23 @@ export default function CardTableScreenRN() {
             onPeekAtIndex={(i) =>
               markPeeked('p1', i)
             }
+            canRespondAtIndex={(i) =>
+              phase === 'respond' &&
+              respondPlayer === 'p1' &&
+              !!respondRank &&
+              !!hands.p1?.[i]
+            }
+            onRespondAtIndex={(i) => respondPlayFromHand('p1', i)}
             canSwap={phase === 'turn' && turnStep === 'resolve' && turnPlayer === 'p1' && !!drawnCard}
             onSwapAtIndex={(i) => swapWithHand('p1', i)}
+            forceFaceUp={phase === 'gameOver'}
           />
           <View
             style={[
               styles.nameplate,
               styles.nameplateYou,
               phase === 'peek' && peekTurnPlayer === 'p1' ? styles.nameplateActive : null,
+              phase === 'respond' && respondPlayer === 'p1' ? styles.nameplateActive : null,
               phase === 'turn' && turnPlayer === 'p1' ? styles.nameplateActive : null,
             ]}
           >
@@ -253,6 +384,7 @@ export default function CardTableScreenRN() {
                 styles.labelText,
                 styles.labelTextYou,
                 phase === 'peek' && peekTurnPlayer === 'p1' ? styles.labelTextActive : null,
+                phase === 'respond' && respondPlayer === 'p1' ? styles.labelTextActive : null,
                 phase === 'turn' && turnPlayer === 'p1' ? styles.labelTextActive : null,
               ]}
             >
