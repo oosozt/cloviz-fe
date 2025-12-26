@@ -1,28 +1,23 @@
-import React, { useState } from "react";
-import { StyleSheet, View } from "react-native";
-import LobbyScreen from "./components/LobbyScreen";
-import CardTableScreen from "./CardTableScreen.js";
+import 'react-native-gesture-handler';
+import * as React from 'react';
+
+import { NavigationContainer } from '@react-navigation/native';
+import { createStackNavigator } from '@react-navigation/stack';
+
+import MainScreen from './MainScreen';
+import CardTableScreen from './CardTableScreen';
+import ConnectWsScreen from './ConnectWsScreen';
+
+const Stack = createStackNavigator();
 
 export default function App() {
-  const [roomId, setRoomId] = useState(null);
-  const [playerName, setPlayerName] = useState(null);
-
   return (
-    <View style={styles.container}>
-      {!roomId ? (
-        <LobbyScreen />
-      ) : (
-        <CardTableScreen roomId={roomId} playerName={playerName} />
-      )}
-    </View>
+    <NavigationContainer>
+      <Stack.Navigator initialRouteName="Main" screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="Main" component={MainScreen} />
+        <Stack.Screen name="CardTable" component={CardTableScreen} />
+        <Stack.Screen name="ConnectWs" component={ConnectWsScreen} />
+      </Stack.Navigator>
+    </NavigationContainer>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#fff",
-    alignItems: "stretch",
-    justifyContent: "flex-start",
-  },
-});
