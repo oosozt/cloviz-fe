@@ -6,7 +6,13 @@ export default function MainScreen({ navigation }) {
   return (
     <SafeAreaView style={styles.screen}>
       <View style={styles.root}>
-        <Text style={styles.title}>CLOVIZ</Text>
+
+        {/* ✅ LOGO */}
+        <Image
+          source={require('./assets/Cloviz Logo.png')}
+          style={styles.logo}
+          resizeMode="contain"
+        />
 
         <Pressable
           onPress={() => navigation.navigate('CardTable')}
@@ -29,7 +35,14 @@ export default function MainScreen({ navigation }) {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#d4d4d4' },
   root: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 16 },
-  title: { fontFamily: getMonospaceFontFamily(), fontSize: 22, color: '#000', marginBottom: 16 },
+
+  // ✅ Logo boyutu
+  logo: {
+    width: 260,
+    height: 110,
+    marginBottom: 18,
+  },
+
   button: {
     backgroundColor: '#fff',
     borderWidth: 4,
